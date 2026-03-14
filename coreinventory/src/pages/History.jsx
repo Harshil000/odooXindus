@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { DataTable, EmptyRow, PageHeader } from '../components/UI'
 import { Search } from 'lucide-react'
@@ -18,10 +18,77 @@ function qtyClass(qty) {
 }
 
 export default function History() {
-  const { history } = useStore()
+  const {
+    user,
+    warehouses,
+    receipts,
+    deliveries,
+    transfers,
+    adjustments,
+    fetchWarehouses,
+    fetchReceipts,
+    fetchDeliveries,
+    fetchTransfers,
+    fetchAdjustments,
+  } = useStore()
   const [q,    setQ]    = useState('')
   const [type, setType] = useState('')
   const [wh,   setWh]   = useState('')
+
+  useEffect(() => {
+    fetchWarehouses()
+    fetchReceipts()
+    fetchDeliveries()
+    fetchTransfers()
+    fetchAdjustments()
+  }, [])
+
+  const history = useMemo(() => {
+    const rows = [
+      ...receipts.map(r => ({
+        dt: r.date || '',
+        ref: `RCP-${String(r.receipt_id).padStart(3, '0')}`,
+        type: 'Receipt',
+        product: r.product || '-',
+        from: 'Supplier',
+        to: r.wh || '-',
+        qty: `+${r.qty}`,
+        user: user?.name || 'System',
+      })),
+      ...deliveries.map(d => ({
+        dt: d.date || '',
+        ref: `DLV-${String(d.delivery_id).padStart(3, '0')}`,
+        type: 'Delivery',
+        product: d.product || '-',
+        from: d.wh || '-',
+        to: d.customer || 'Customer',
+        qty: `-${d.qty}`,
+        user: user?.name || 'System',
+      })),
+      ...transfers.map(t => ({
+        dt: t.date || '',
+        ref: `TRF-${String(t.transfer_id).padStart(3, '0')}`,
+        type: 'Transfer',
+        product: t.product || '-',
+        from: t.from || '-',
+        to: t.to || '-',
+        qty: `${t.qty}`,
+        user: user?.name || 'System',
+      })),
+      ...adjustments.map(a => ({
+        dt: a.date || '',
+        ref: `ADJ-${String(a.adjustment_id).padStart(3, '0')}`,
+        type: 'Adjustment',
+        product: a.product || '-',
+        from: a.location || '-',
+        to: a.location || '-',
+        qty: `${Number(a.counted) - Number(a.recorded) > 0 ? '+' : ''}${Number(a.counted) - Number(a.recorded)}`,
+        user: user?.name || 'System',
+      })),
+    ]
+
+    return rows.sort((a, b) => new Date(b.dt || 0) - new Date(a.dt || 0))
+  }, [receipts, deliveries, transfers, adjustments, user])
 
   const filtered = history.filter(h => {
     const mq = !q    || h.product.toLowerCase().includes(q.toLowerCase()) || h.ref.toLowerCase().includes(q.toLowerCase())
@@ -56,10 +123,7 @@ export default function History() {
         </select>
         <select className="select-field text-sm py-2" value={wh} onChange={e => setWh(e.target.value)}>
           <option value="">All Locations</option>
-          <option>Main WH</option>
-          <option>Production</option>
-          <option>Vendor</option>
-          <option>Warehouse B</option>
+          {warehouses.map(w => <option key={w.warehouse_id} value={w.name}>{w.name}</option>)}
         </select>
         <span className="ml-auto text-xs font-mono text-muted">
           {filtered.length} record{filtered.length !== 1 ? 's' : ''}

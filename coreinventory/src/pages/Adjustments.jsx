@@ -1,27 +1,35 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { Modal, Field, Badge, DataTable, EmptyRow, PageHeader } from '../components/UI'
 import { Plus } from 'lucide-react'
 import clsx from 'clsx'
 
-const LOCS = ['Main Warehouse','Production Floor','Rack A','Rack B','Warehouse B']
+
 
 export default function Adjustments() {
-  const { adjustments, products, addAdjustment, showToast } = useStore()
-  const [modal,  setModal]  = useState(false)
-  const [form,   setForm]   = useState({ product:'', location:'Main Warehouse', counted:'' })
+    const { adjustments, products, warehouses, addAdjustment, showToast,
+      fetchAdjustments, fetchProducts, fetchWarehouses } = useStore()
+    const [modal,  setModal]  = useState(false)
+    const [busy,   setBusy]   = useState(false)
+    const EMPTY = { product_id:'', warehouse_id:'', counted:'' }
+    const [form,   setForm]   = useState(EMPTY)
 
-  const selected  = products.find(p => p.name === form.product)
+    useEffect(() => { fetchAdjustments(); fetchProducts(); fetchWarehouses() }, [])
+
+    const selected  = products.find(p => p.id === parseInt(form.product_id))
   const recorded  = selected?.stock ?? 0
   const counted   = form.counted !== '' ? parseInt(form.counted) : null
   const diff      = counted !== null ? counted - recorded : null
 
   const submit = () => {
-    if (!form.product || form.counted === '') { showToast('Product and physical count required', 'error'); return }
-    addAdjustment({ product: form.product, location: form.location, recorded, counted: parseInt(form.counted) })
-    showToast(`Adjustment applied — stock set to ${form.counted}`, 'success')
-    setModal(false)
-    setForm({ product:'', location:'Main Warehouse', counted:'' })
+    if (!form.product_id || !form.warehouse_id || form.counted === '') {
+      showToast('Product, warehouse and physical count required', 'error'); return
+    }
+    setBusy(true)
+    addAdjustment({ product_id: parseInt(form.product_id), warehouse_id: parseInt(form.warehouse_id), new_quantity: parseInt(form.counted), reason: 'Manual count' })
+      .then(() => { showToast(`Adjustment applied — stock set to ${form.counted}`, 'success'); setModal(false); setForm(EMPTY) })
+      .catch(e => showToast(e?.response?.data?.message || 'Failed to apply adjustment', 'error'))
+      .finally(() => setBusy(false))
   }
 
   return (
@@ -38,8 +46,8 @@ export default function Adjustments() {
           : adjustments.map(a => {
               const d = a.counted - a.recorded
               return (
-                <tr key={a.ref} className="table-row">
-                  <td className="table-td font-mono text-xs text-accent">{a.ref}</td>
+                <tr key={a.adjustment_id} className="table-row">
+                  <td className="table-td font-mono text-xs text-accent">ADJ-{String(a.adjustment_id).padStart(3,'0')}</td>
                   <td className="table-td text-text font-medium">{a.product}</td>
                   <td className="table-td text-dim text-sm">{a.location}</td>
                   <td className="table-td font-mono text-dim">{a.recorded}</td>
@@ -59,21 +67,22 @@ export default function Adjustments() {
           <Field label="Product *">
             <select
               className="select-field w-full"
-              value={form.product}
-              onChange={e => setForm({ ...form, product: e.target.value })}
+              value={form.product_id}
+              onChange={e => setForm({ ...form, product_id: e.target.value })}
             >
               <option value="">Select product…</option>
-              {products.map(p => <option key={p.id}>{p.name}</option>)}
+              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
 
           <Field label="Location">
             <select
               className="select-field w-full"
-              value={form.location}
-              onChange={e => setForm({ ...form, location: e.target.value })}
+              value={form.warehouse_id}
+              onChange={e => setForm({ ...form, warehouse_id: e.target.value })}
             >
-              {LOCS.map(l => <option key={l}>{l}</option>)}
+              <option value="">Select warehouse…</option>
+              {warehouses.map(w => <option key={w.warehouse_id} value={w.warehouse_id}>{w.name}</option>)}
             </select>
           </Field>
 
@@ -117,7 +126,7 @@ export default function Adjustments() {
         </div>
 
         <div className="flex gap-3 mt-6">
-          <button className="btn-primary flex-1" onClick={submit}>Apply Adjustment</button>
+          <button className="btn-primary flex-1" onClick={submit} disabled={busy}>{busy ? 'Saving...' : 'Apply Adjustment'}</button>
           <button className="btn-ghost" onClick={() => setModal(false)}>Cancel</button>
         </div>
       </Modal>

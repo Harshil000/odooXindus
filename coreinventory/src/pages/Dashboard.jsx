@@ -1,17 +1,9 @@
+import { useMemo, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { Badge } from '../components/UI'
 import { useNavigate } from 'react-router-dom'
 import { Package, AlertTriangle, XCircle, ArrowDownToLine, ArrowUpFromLine, TrendingUp, ArrowRight } from 'lucide-react'
 import clsx from 'clsx'
-
-const RECENT = [
-  { ref:'RCP-001', type:'Receipt',    product:'Steel Rods 10mm', qty:'+100 kg',  status:'Done',    date:'Mar 10' },
-  { ref:'DEL-001', type:'Delivery',   product:'Steel Rods 10mm', qty:'-20 kg',   status:'Ready',   date:'Mar 11' },
-  { ref:'TRF-001', type:'Transfer',   product:'Steel Rods 10mm', qty:'30 kg',    status:'Ready',   date:'Mar 10' },
-  { ref:'ADJ-001', type:'Adjustment', product:'Steel Rods 10mm', qty:'-3 kg',    status:'Done',    date:'Mar 12' },
-  { ref:'RCP-002', type:'Receipt',    product:'Copper Wire 2mm', qty:'+200 mtr', status:'Waiting', date:'Mar 12' },
-  { ref:'DEL-002', type:'Delivery',   product:'Bolts M8',        qty:'-200 pcs', status:'Waiting', date:'Mar 13' },
-]
 
 function qc(q) {
   if (q.startsWith('+')) return 'text-success font-mono font-semibold'
@@ -20,19 +12,109 @@ function qc(q) {
 }
 
 export default function Dashboard() {
-  const { products } = useStore()
+  const { products, receipts, deliveries, transfers, adjustments, warehouses } = useStore()
   const navigate = useNavigate()
+  const [typeFilter, setTypeFilter] = useState('All Types')
+  const [statusFilter, setStatusFilter] = useState('All Status')
+  const [warehouseFilter, setWarehouseFilter] = useState('All Warehouses')
 
-  const low = products.filter(p => p.stock > 0 && p.stock <= p.reorder)
+  const low = products.filter(p => p.stock > 0 && p.stock <= 10)
   const out = products.filter(p => p.stock === 0)
   const alerts = [...out, ...low]
+  const pendingReceipts = receipts.filter(r => r.status !== 'Done').length
+  const pendingDeliveries = deliveries.filter(d => d.status !== 'Done').length
+
+  const operations = useMemo(() => {
+    const rows = [
+      ...receipts.map(r => ({
+        ref: `RCP-${String(r.receipt_id).padStart(3, '0')}`,
+        type: 'Receipt',
+        product: r.product,
+        qty: `+${r.qty}`,
+        status: r.status,
+        date: r.date ? new Date(r.date).toLocaleDateString() : '',
+        rawDate: r.date || '',
+        warehouse: r.wh || '',
+      })),
+      ...deliveries.map(d => ({
+        ref: `DLV-${String(d.delivery_id).padStart(3, '0')}`,
+        type: 'Delivery',
+        product: d.product,
+        qty: `-${d.qty}`,
+        status: d.status,
+        date: d.date ? new Date(d.date).toLocaleDateString() : '',
+        rawDate: d.date || '',
+        warehouse: d.wh || '',
+      })),
+      ...transfers.map(t => ({
+        ref: `TRF-${String(t.transfer_id).padStart(3, '0')}`,
+        type: 'Transfer',
+        product: t.product,
+        qty: `${t.qty}`,
+        status: t.status,
+        date: t.date ? new Date(t.date).toLocaleDateString() : '',
+        rawDate: t.date || '',
+        warehouse: `${t.from || ''} -> ${t.to || ''}`,
+      })),
+      ...adjustments.map(a => {
+        const diff = Number(a.counted) - Number(a.recorded)
+        return {
+          ref: `ADJ-${String(a.adjustment_id).padStart(3, '0')}`,
+          type: 'Adjustment',
+          product: a.product,
+          qty: `${diff > 0 ? '+' : ''}${diff}`,
+          status: 'Done',
+          date: a.date ? new Date(a.date).toLocaleDateString() : '',
+          rawDate: a.date || '',
+          warehouse: a.location || '',
+        }
+      }),
+    ]
+
+    return rows.sort((a, b) => new Date(b.rawDate || 0) - new Date(a.rawDate || 0))
+  }, [receipts, deliveries, transfers, adjustments])
+
+  const filteredRecent = useMemo(() => {
+    return operations.filter(op => {
+      const typeOk = (
+        typeFilter === 'All Types' ||
+        (typeFilter === 'Receipts' && op.type === 'Receipt') ||
+        (typeFilter === 'Delivery' && op.type === 'Delivery') ||
+        (typeFilter === 'Internal' && op.type === 'Transfer') ||
+        (typeFilter === 'Adjustments' && op.type === 'Adjustment')
+      )
+
+      const statusOk = statusFilter === 'All Status' || op.status === statusFilter
+
+      const warehouseOk = (
+        warehouseFilter === 'All Warehouses' ||
+        op.warehouse === warehouseFilter ||
+        op.warehouse.includes(warehouseFilter)
+      )
+
+      return typeOk && statusOk && warehouseOk
+    }).slice(0, 10)
+  }, [operations, typeFilter, statusFilter, warehouseFilter])
+
+  const filteredScheduledTransfers = useMemo(() => {
+    return transfers.filter(t => {
+      if (t.status === 'Done') return false
+      const statusOk = statusFilter === 'All Status' || t.status === statusFilter
+      const warehouseOk = (
+        warehouseFilter === 'All Warehouses' ||
+        t.from === warehouseFilter ||
+        t.to === warehouseFilter
+      )
+      return statusOk && warehouseOk
+    }).slice(0, 3)
+  }, [transfers, statusFilter, warehouseFilter])
 
   const KPIS = [
     { label:'Total Products',     val:products.length, sub:'In catalog',       icon:Package,         c:'text-textLt',  bg:'bg-card' },
     { label:'Low Stock',          val:low.length,      sub:'Need reorder',     icon:AlertTriangle,   c:'text-warning', bg:'bg-warning/8' },
     { label:'Out of Stock',       val:out.length,      sub:'Action needed',    icon:XCircle,         c:'text-danger',  bg:'bg-danger/8' },
-    { label:'Pending Receipts',   val:7,               sub:'Awaiting arrival', icon:ArrowDownToLine, c:'text-info',    bg:'bg-info/8' },
-    { label:'Pending Deliveries', val:5,               sub:'Ready to ship',    icon:ArrowUpFromLine, c:'text-accent',  bg:'bg-accent/8' },
+    { label:'Pending Receipts',   val:pendingReceipts,    sub:'Awaiting arrival', icon:ArrowDownToLine, c:'text-info',    bg:'bg-info/8' },
+    { label:'Pending Deliveries', val:pendingDeliveries,  sub:'Ready to ship',    icon:ArrowUpFromLine, c:'text-accent',  bg:'bg-accent/8' },
   ]
 
   return (
@@ -57,20 +139,24 @@ export default function Dashboard() {
       {/* Filters row */}
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs font-mono text-muted uppercase tracking-widest">Filter:</span>
-        {['All Types','Receipts','Delivery','Internal','Adjustments'].map((f,i) => (
-          <button key={f} className={`text-xs font-mono px-3 py-1.5 rounded-lg border transition-colors
-            ${i===0 ? 'border-accent text-accentLt bg-accent/6' : 'border-border text-muted hover:border-accent/50 hover:text-dim'}`}>
+        {['All Types','Receipts','Delivery','Internal','Adjustments'].map(f => (
+          <button
+            key={f}
+            onClick={() => setTypeFilter(f)}
+            className={`text-xs font-mono px-3 py-1.5 rounded-lg border transition-colors
+            ${typeFilter === f ? 'border-accent text-accentLt bg-accent/6' : 'border-border text-muted hover:border-accent/50 hover:text-dim'}`}
+          >
             {f}
           </button>
         ))}
         <div className="ml-auto flex gap-2">
-          <select className="select-field text-xs py-1.5 px-3">
+          <select className="select-field text-xs py-1.5 px-3" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option>All Status</option>
             <option>Draft</option><option>Waiting</option><option>Ready</option><option>Done</option>
           </select>
-          <select className="select-field text-xs py-1.5 px-3">
+          <select className="select-field text-xs py-1.5 px-3" value={warehouseFilter} onChange={e => setWarehouseFilter(e.target.value)}>
             <option>All Warehouses</option>
-            <option>Main Warehouse</option><option>Production Floor</option><option>Warehouse B</option>
+            {warehouses.map(w => <option key={w.warehouse_id} value={w.name}>{w.name}</option>)}
           </select>
         </div>
       </div>
@@ -93,7 +179,9 @@ export default function Dashboard() {
               ))}
             </tr></thead>
             <tbody>
-              {RECENT.map(r => (
+              {filteredRecent.length === 0
+                ? <tr><td colSpan={6} className="table-td text-center text-muted text-xs font-mono py-4">No operations match current filters</td></tr>
+                : filteredRecent.map(r => (
                 <tr key={r.ref} className="table-row">
                   <td className="table-td font-mono text-xs text-accent">{r.ref}</td>
                   <td className="table-td text-dim text-xs">{r.type}</td>
@@ -140,11 +228,8 @@ export default function Dashboard() {
               <span className="font-serif font-semibold text-textLt text-sm">Scheduled Transfers</span>
             </div>
             <div className="p-4 space-y-3">
-              {[
-                { from:'Main WH',to:'Production',product:'Steel Rods',qty:'30 pcs',status:'Ready'   },
-                { from:'Rack A', to:'Rack B',    product:'Bolts M8',  qty:'500 pcs',status:'Waiting' },
-              ].map((t,i) => (
-                <div key={i} className="flex items-center justify-between">
+              {filteredScheduledTransfers.map(t => (
+                <div key={t.transfer_id} className="flex items-center justify-between">
                   <div>
                     <div className="text-xs text-dim">{t.from} → {t.to}</div>
                     <div className="text-sm text-text font-medium">{t.product} · {t.qty}</div>
@@ -152,6 +237,9 @@ export default function Dashboard() {
                   <Badge status={t.status}/>
                 </div>
               ))}
+              {filteredScheduledTransfers.length === 0 && (
+                <p className="text-center text-muted text-xs font-mono py-4">No pending transfers match filters</p>
+              )}
             </div>
           </div>
         </div>

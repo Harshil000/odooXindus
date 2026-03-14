@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, Package, ArrowDownToLine, ArrowUpFromLine,
+  LayoutDashboard, Package, Warehouse, ArrowDownToLine, ArrowUpFromLine,
   ArrowLeftRight, SlidersHorizontal, History, User, LogOut
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -10,6 +10,7 @@ const NAV = [
   { group:'Main', items:[
     { to:'/',            icon:LayoutDashboard,   label:'Dashboard' },
     { to:'/products',    icon:Package,           label:'Products' },
+    { to:'/warehouses',  icon:Warehouse,         label:'Warehouses' },
   ]},
   { group:'Operations', items:[
     { to:'/receipts',    icon:ArrowDownToLine,   label:'Receipts',           badge:'3', bc:'bg-info/10 text-info' },

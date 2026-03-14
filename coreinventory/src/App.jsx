@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useStore } from './store/useStore'
 import { Toast }    from './components/UI'
@@ -7,6 +8,7 @@ import TopBar        from './components/TopBar'
 import AuthPage    from './pages/AuthPage'
 import Dashboard   from './pages/Dashboard'
 import Products    from './pages/Products'
+import Warehouses  from './pages/Warehouses'
 import Receipts    from './pages/Receipts'
 import Delivery    from './pages/Delivery'
 import Transfers   from './pages/Transfers'
@@ -15,8 +17,10 @@ import History     from './pages/History'
 import Profile     from './pages/Profile'
 
 function AppShell() {
-  const { user } = useStore()
+  const { user, bootstrap } = useStore()
   if (!user) return <Navigate to="/login" replace />
+
+  useEffect(() => { bootstrap() }, [])  // eslint-disable-line
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
@@ -27,6 +31,7 @@ function AppShell() {
           <Routes>
             <Route path="/"            element={<Dashboard />}   />
             <Route path="/products"    element={<Products />}    />
+            <Route path="/warehouses"  element={<Warehouses />}  />
             <Route path="/receipts"    element={<Receipts />}    />
             <Route path="/delivery"    element={<Delivery />}    />
             <Route path="/transfers"   element={<Transfers />}   />
@@ -42,11 +47,17 @@ function AppShell() {
 }
 
 export default function App() {
-  const { toast, user } = useStore()
+  const { toast, user, verifySession } = useStore()
+
+  useEffect(() => {
+    verifySession()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <>
       <Routes>
         <Route path="/login" element={user ? <Navigate to="/" replace /> : <AuthPage />} />
+        <Route path="/register" element={user ? <Navigate to="/" replace /> : <AuthPage />} />
         <Route path="/*"     element={<AppShell />} />
       </Routes>
       <Toast toast={toast} />

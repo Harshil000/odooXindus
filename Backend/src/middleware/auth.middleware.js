@@ -1,9 +1,11 @@
 const jwt = require('jsonwebtoken');
 
 async function identifyUser(req , res , next) {
-    const token = req.cookies.jwt_token;
+    const authHeader = req.headers.authorization || '';
+    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    const token = bearerToken || req.cookies.JWT_Token || req.cookies.jwt_token;
     if (!token) {
-        return res.status(401).json({msg : 'No Token , authorization denied'})
+        return res.status(401).json({ message: 'No token, authorization denied' })
     }
 
     let decoded = null
@@ -13,7 +15,7 @@ async function identifyUser(req , res , next) {
         req.user = decoded;
         next();
     } catch (err) {
-        return res.status(401).json({msg : 'Token is not valid'})
+        return res.status(401).json({ message: 'Token is not valid' })
     }
 }
 

@@ -1,4 +1,12 @@
-const { registerUserService, loginUserService, forgetPasswordService, verifyOtpService, resetPasswordService } = require('../services/auth.service');
+const {
+    registerUserService,
+    loginUserService,
+    forgetPasswordService,
+    verifyOtpService,
+    resetPasswordService,
+    getMeService,
+    updateMeService,
+} = require('../services/auth.service');
 
 async function registerUser(req, res) {
     const { name, email, password, role } = req.body;
@@ -63,4 +71,37 @@ async function resetPassword(req, res) {
     return res.status(result.statusCode).json({ message: result.message });
 }
 
-module.exports = { registerUser, loginUser, forgetPassword, verifyOtp, resetPassword };
+async function getMe(req, res) {
+    const result = await getMeService({ userId: req.user?.id });
+    if (result.statusCode !== 200) {
+        return res.status(result.statusCode).json({ message: result.message });
+    }
+    return res.status(200).json({ data: result.data });
+}
+
+async function updateMe(req, res) {
+    const { name, email, role, newPassword } = req.body;
+    const result = await updateMeService({
+        userId: req.user?.id,
+        name,
+        email,
+        role,
+        newPassword,
+    });
+
+    if (result.statusCode !== 200) {
+        return res.status(result.statusCode).json({ message: result.message });
+    }
+
+    return res.status(200).json({ data: result.data, message: result.message });
+}
+
+module.exports = {
+    registerUser,
+    loginUser,
+    forgetPassword,
+    verifyOtp,
+    resetPassword,
+    getMe,
+    updateMe,
+};

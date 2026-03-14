@@ -5,7 +5,7 @@ import { Field } from '../components/UI'
 import { User, Shield, Bell, LogOut, Save } from 'lucide-react'
 
 export default function Profile() {
-  const { user, logout, showToast } = useStore()
+  const { user, logout, showToast, updateProfileAction, verifySession } = useStore()
   const navigate = useNavigate()
 
   const [form, setForm] = useState({
@@ -19,7 +19,62 @@ export default function Profile() {
   const initials = (form.name || 'U')
     .split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
 
-  const handleSave = () => showToast('Profile updated successfully', 'success')
+  const [busy, setBusy] = useState(false)
+
+  const handleSave = async () => {
+    const cleanName = form.name.trim()
+    const cleanEmail = form.email.trim().toLowerCase()
+    const cleanRole = form.role.trim()
+    const allowedRoles = ['Staff Member', 'Inventory Manager']
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+    if (!cleanName || !cleanEmail || !cleanRole) {
+      showToast('Name, email and role are required', 'error')
+      return
+    }
+
+    if (cleanName.length < 2 || cleanName.length > 100) {
+      showToast('Name must be between 2 and 100 characters', 'error')
+      return
+    }
+
+    if (!emailRegex.test(cleanEmail)) {
+      showToast('Please enter a valid email address', 'error')
+      return
+    }
+
+    if (!allowedRoles.includes(cleanRole)) {
+      showToast('Please select a valid role', 'error')
+      return
+    }
+
+    if (form.newPwd && form.newPwd.length < 6) {
+      showToast('New password must be at least 6 characters', 'error')
+      return
+    }
+
+    if (form.newPwd && (!/[A-Za-z]/.test(form.newPwd) || !/\d/.test(form.newPwd))) {
+      showToast('New password must contain at least one letter and one number', 'error')
+      return
+    }
+
+    setBusy(true)
+    try {
+      await updateProfileAction({
+        name: cleanName,
+        email: cleanEmail,
+        role: cleanRole,
+        newPassword: form.newPwd || undefined,
+      })
+      setForm((prev) => ({ ...prev, newPwd: '' }))
+      showToast('Profile updated successfully', 'success')
+      await verifySession()
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Failed to update profile', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const handleLogout = () => {
     logout()
@@ -155,8 +210,8 @@ export default function Profile() {
 
         {/* ─── Actions ─── */}
         <div className="flex gap-3 pt-1">
-          <button className="btn-primary" onClick={handleSave}>
-            <Save size={14}/> Save Changes
+          <button className="btn-primary" onClick={handleSave} disabled={busy}>
+            <Save size={14}/> {busy ? 'Saving...' : 'Save Changes'}
           </button>
           <button className="btn-danger" onClick={handleLogout}>
             <LogOut size={14}/> Sign Out

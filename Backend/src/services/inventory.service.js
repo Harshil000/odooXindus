@@ -6,18 +6,29 @@ const {
   createCategory,
   getCategories,
   createProduct,
-  getProducts,
+  getProductsWithStock,
   createStock,
   getStock,
-  createReceipt,
-  createReceiptItem,
-  createDelivery,
-  createDeliveryItem,
-  createTransfer,
-  createTransferItem,
+  createReceiptWithItem,
+  getReceipts,
+  validateReceipt,
+  createDeliveryWithItem,
+  getDeliveries,
+  validateDelivery,
+  createTransferWithItem,
+  getTransfers,
+  validateTransfer,
+  getAdjustments,
   getProductStockQuantity,
   adjustStockQuantity,
   findProductBySku,
+  getProductTotalStock,
+  deleteProductById,
+  getWarehouseTotalStock,
+  getWarehouseStockDetails,
+  deleteWarehouseById,
+  getCategoryProductCount,
+  deleteCategoryById,
 } = require('../repositories/inventory.repository');
 
 function toCleanString(value) {
@@ -74,8 +85,12 @@ async function createWarehouseService({ name, location, manager }) {
   }
 }
 
-async function getWarehousesService() {
-  const warehouses = await getWarehouses();
+async function getWarehousesService({ user_id } = {}) {
+  const userId = toCleanString(user_id);
+  if (!userId) {
+    return { statusCode: 200, data: [] };
+  }
+  const warehouses = await getWarehouses(userId);
   return { statusCode: 200, data: warehouses };
 }
 
@@ -124,6 +139,21 @@ async function getCategoriesService() {
   return { statusCode: 200, data: categories };
 }
 
+async function deleteCategoryService({ category_id }) {
+  const categoryId = parsePositiveInt(category_id);
+  if (!categoryId) return { statusCode: 400, message: 'valid category_id is required' };
+  try {
+    const count = await getCategoryProductCount(categoryId);
+    if (count > 0) {
+      return { statusCode: 409, message: `Cannot delete: ${count} product(s) are assigned to this category. Reassign or delete those products first.` };
+    }
+    await deleteCategoryById(categoryId);
+    return { statusCode: 200, message: 'category deleted successfully' };
+  } catch (error) {
+    return mapDbError(error, 'failed to delete category');
+  }
+}
+
 async function createProductService({ name, sku, category_id, unit }) {
   const cleanName = toCleanString(name);
   const cleanSku = toCleanString(sku);
@@ -148,9 +178,17 @@ async function createProductService({ name, sku, category_id, unit }) {
   }
 }
 
-async function getProductsService() {
-  const products = await getProducts();
+async function getProductsWithStockService({ user_id } = {}) {
+  const userId = toCleanString(user_id);
+  if (!userId) {
+    return { statusCode: 200, data: [] };
+  }
+  const products = await getProductsWithStock(userId);
   return { statusCode: 200, data: products };
+}
+
+async function getProductsService() {
+  return getProductsWithStockService();
 }
 
 async function createStockService({ product_id, warehouse_id, quantity }) {
@@ -170,86 +208,108 @@ async function createStockService({ product_id, warehouse_id, quantity }) {
   }
 }
 
-async function getStockService() {
-  const stockRows = await getStock();
+async function getStockService({ user_id } = {}) {
+  const userId = toCleanString(user_id);
+  if (!userId) {
+    return { statusCode: 200, data: [] };
+  }
+  const stockRows = await getStock(userId);
   return { statusCode: 200, data: stockRows };
 }
 
-async function createReceiptService({ supplier_name, warehouse_id, status }) {
+async function createReceiptService({ supplier_name, warehouse_id, status, product_id, quantity }) {
   const supplierName = toCleanString(supplier_name);
   const warehouseId = parsePositiveInt(warehouse_id);
   const cleanStatus = toCleanString(status);
+  const productId = parsePositiveInt(product_id);
+  const parsedQty = parsePositiveInt(quantity);
 
-  if (!supplierName || !warehouseId || !cleanStatus) {
-    return { statusCode: 400, message: 'supplier_name, warehouse_id and status are required' };
+  if (!supplierName || !warehouseId || !cleanStatus || !productId || !parsedQty) {
+    return { statusCode: 400, message: 'supplier_name, warehouse_id, status, product_id and quantity are required' };
   }
 
   try {
-    const receipt = await createReceipt({ supplierName, warehouseId, status: cleanStatus });
+    const receipt = await createReceiptWithItem({
+      supplierName, warehouseId, status: cleanStatus, productId, quantity: parsedQty,
+    });
     return { statusCode: 201, message: 'receipt created successfully', data: receipt };
   } catch (error) {
     return mapDbError(error, 'failed to create receipt');
   }
 }
 
-async function createReceiptItemService({ receipt_id, product_id, quantity }) {
-  const receiptId = parsePositiveInt(receipt_id);
-  const productId = parsePositiveInt(product_id);
-  const parsedQuantity = parsePositiveInt(quantity);
+async function getReceiptsService() {
+  const rows = await getReceipts();
+  return { statusCode: 200, data: rows };
+}
 
-  if (!receiptId || !productId || !parsedQuantity) {
-    return { statusCode: 400, message: 'receipt_id, product_id and quantity are required' };
-  }
+async function validateReceiptService({ receipt_id }) {
+  const receiptId = parsePositiveInt(receipt_id);
+  if (!receiptId) return { statusCode: 400, message: 'receipt_id is required' };
 
   try {
-    const item = await createReceiptItem({ receiptId, productId, quantity: parsedQuantity });
-    return { statusCode: 201, message: 'receipt item created successfully', data: item };
+    const result = await validateReceipt(receiptId);
+    return { statusCode: 200, message: 'receipt validated and stock updated', data: result };
   } catch (error) {
-    return mapDbError(error, 'failed to create receipt item');
+    return { statusCode: error.statusCode || 500, message: error.message || 'failed to validate receipt' };
   }
 }
 
-async function createDeliveryService({ customer_name, warehouse_id, status }) {
+async function createReceiptItemService({ receipt_id, product_id, quantity }) {
+  return { statusCode: 400, message: 'use POST /receipts with product_id and quantity to create receipt with item' };
+}
+
+async function createDeliveryService({ customer_name, warehouse_id, status, product_id, quantity }) {
   const customerName = toCleanString(customer_name);
   const warehouseId = parsePositiveInt(warehouse_id);
   const cleanStatus = toCleanString(status);
+  const productId = parsePositiveInt(product_id);
+  const parsedQty = parsePositiveInt(quantity);
 
-  if (!customerName || !warehouseId || !cleanStatus) {
-    return { statusCode: 400, message: 'customer_name, warehouse_id and status are required' };
+  if (!customerName || !warehouseId || !cleanStatus || !productId || !parsedQty) {
+    return { statusCode: 400, message: 'customer_name, warehouse_id, status, product_id and quantity are required' };
   }
 
   try {
-    const delivery = await createDelivery({ customerName, warehouseId, status: cleanStatus });
+    const delivery = await createDeliveryWithItem({
+      customerName, warehouseId, status: cleanStatus, productId, quantity: parsedQty,
+    });
     return { statusCode: 201, message: 'delivery created successfully', data: delivery };
   } catch (error) {
     return mapDbError(error, 'failed to create delivery');
   }
 }
 
-async function createDeliveryItemService({ delivery_id, product_id, quantity }) {
-  const deliveryId = parsePositiveInt(delivery_id);
-  const productId = parsePositiveInt(product_id);
-  const parsedQuantity = parsePositiveInt(quantity);
+async function getDeliveriesService() {
+  const rows = await getDeliveries();
+  return { statusCode: 200, data: rows };
+}
 
-  if (!deliveryId || !productId || !parsedQuantity) {
-    return { statusCode: 400, message: 'delivery_id, product_id and quantity are required' };
-  }
+async function validateDeliveryService({ delivery_id }) {
+  const deliveryId = parsePositiveInt(delivery_id);
+  if (!deliveryId) return { statusCode: 400, message: 'delivery_id is required' };
 
   try {
-    const item = await createDeliveryItem({ deliveryId, productId, quantity: parsedQuantity });
-    return { statusCode: 201, message: 'delivery item created successfully', data: item };
+    const result = await validateDelivery(deliveryId);
+    return { statusCode: 200, message: 'delivery validated and stock updated', data: result };
   } catch (error) {
-    return mapDbError(error, 'failed to create delivery item');
+    return { statusCode: error.statusCode || 500, message: error.message || 'failed to validate delivery' };
   }
 }
 
-async function createTransferService({ from_warehouse, to_warehouse, status }) {
+async function createDeliveryItemService({ delivery_id, product_id, quantity }) {
+  return { statusCode: 400, message: 'use POST /deliveries with product_id and quantity to create delivery with item' };
+}
+
+async function createTransferService({ from_warehouse, to_warehouse, status, product_id, quantity }) {
   const fromWarehouse = parsePositiveInt(from_warehouse);
   const toWarehouse = parsePositiveInt(to_warehouse);
   const cleanStatus = toCleanString(status);
+  const productId = parsePositiveInt(product_id);
+  const parsedQty = parsePositiveInt(quantity);
 
-  if (!fromWarehouse || !toWarehouse || !cleanStatus) {
-    return { statusCode: 400, message: 'from_warehouse, to_warehouse and status are required' };
+  if (!fromWarehouse || !toWarehouse || !cleanStatus || !productId || !parsedQty) {
+    return { statusCode: 400, message: 'from_warehouse, to_warehouse, status, product_id and quantity are required' };
   }
 
   if (fromWarehouse === toWarehouse) {
@@ -257,32 +317,42 @@ async function createTransferService({ from_warehouse, to_warehouse, status }) {
   }
 
   try {
-    const transfer = await createTransfer({ fromWarehouse, toWarehouse, status: cleanStatus });
+    const transfer = await createTransferWithItem({
+      fromWarehouse, toWarehouse, status: cleanStatus, productId, quantity: parsedQty,
+    });
     return { statusCode: 201, message: 'transfer created successfully', data: transfer };
   } catch (error) {
     return mapDbError(error, 'failed to create transfer');
   }
 }
 
-async function createTransferItemService({ transfer_id, product_id, quantity }) {
-  const transferId = parsePositiveInt(transfer_id);
-  const productId = parsePositiveInt(product_id);
-  const parsedQuantity = parsePositiveInt(quantity);
+async function getTransfersService() {
+  const rows = await getTransfers();
+  return { statusCode: 200, data: rows };
+}
 
-  if (!transferId || !productId || !parsedQuantity) {
-    return { statusCode: 400, message: 'transfer_id, product_id and quantity are required' };
-  }
+async function validateTransferService({ transfer_id }) {
+  const transferId = parsePositiveInt(transfer_id);
+  if (!transferId) return { statusCode: 400, message: 'transfer_id is required' };
 
   try {
-    const item = await createTransferItem({ transferId, productId, quantity: parsedQuantity });
-    return { statusCode: 201, message: 'transfer item created successfully', data: item };
+    const result = await validateTransfer(transferId);
+    return { statusCode: 200, message: 'transfer completed and stock moved', data: result };
   } catch (error) {
-    return mapDbError(error, 'failed to create transfer item');
+    return { statusCode: error.statusCode || 500, message: error.message || 'failed to validate transfer' };
   }
 }
 
-async function adjustStockService({ product_id, warehouse_id, new_quantity, reason }) {
-  const productId = parsePositiveInt(product_id);
+async function createTransferItemService({ transfer_id, product_id, quantity }) {
+  return { statusCode: 400, message: 'use POST /transfers with product_id and quantity to create transfer with item' };
+}
+
+async function getAdjustmentsService() {
+  const rows = await getAdjustments();
+  return { statusCode: 200, data: rows };
+}
+
+async function adjustStockService({ product_id, warehouse_id, new_quantity, reason }) {  const productId = parsePositiveInt(product_id);
   const warehouseId = parsePositiveInt(warehouse_id);
   const newQuantity = parseNonNegativeInt(new_quantity);
   const cleanReason = toCleanString(reason);
@@ -329,6 +399,50 @@ async function getProductBySkuService({ sku }) {
   return { statusCode: 200, data: rows };
 }
 
+async function deleteProductService({ product_id }) {
+  const productId = parsePositiveInt(product_id);
+  if (!productId) {
+    return { statusCode: 400, message: 'valid product_id is required' };
+  }
+
+  try {
+    const deleted = await deleteProductById(productId);
+    if (!deleted) {
+      return { statusCode: 404, message: 'product not found' };
+    }
+    return { statusCode: 200, message: 'product deleted successfully' };
+  } catch (error) {
+    return mapDbError(error, 'failed to delete product');
+  }
+}
+
+async function deleteWarehouseService({ warehouse_id }) {
+  const warehouseId = parsePositiveInt(warehouse_id);
+  if (!warehouseId) {
+    return { statusCode: 400, message: 'valid warehouse_id is required' };
+  }
+
+  const totalStock = await getWarehouseTotalStock(warehouseId);
+  if (totalStock > 0) {
+    const products = await getWarehouseStockDetails(warehouseId);
+    return {
+      statusCode: 409,
+      message: 'cannot delete warehouse with stock available',
+      data: { products, totalStock },
+    };
+  }
+
+  try {
+    const deleted = await deleteWarehouseById(warehouseId);
+    if (!deleted) {
+      return { statusCode: 404, message: 'warehouse not found' };
+    }
+    return { statusCode: 200, message: 'warehouse deleted successfully' };
+  } catch (error) {
+    return mapDbError(error, 'failed to delete warehouse');
+  }
+}
+
 module.exports = {
   createWarehouseService,
   getWarehousesService,
@@ -336,16 +450,27 @@ module.exports = {
   getUserWarehousesService,
   createCategoryService,
   getCategoriesService,
+  deleteCategoryService,
   createProductService,
   getProductsService,
+  getProductsWithStockService,
   createStockService,
   getStockService,
   createReceiptService,
+  getReceiptsService,
+  validateReceiptService,
   createReceiptItemService,
   createDeliveryService,
+  getDeliveriesService,
+  validateDeliveryService,
   createDeliveryItemService,
   createTransferService,
+  getTransfersService,
+  validateTransferService,
   createTransferItemService,
+  getAdjustmentsService,
   adjustStockService,
   getProductBySkuService,
+  deleteProductService,
+  deleteWarehouseService,
 };

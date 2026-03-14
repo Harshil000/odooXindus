@@ -5,6 +5,7 @@ import { useStore } from '../store/useStore'
 
 const TITLES = {
   '/':'Dashboard', '/products':'Products', '/receipts':'Receipts',
+  '/warehouses':'Warehouses',
   '/delivery':'Delivery Orders', '/transfers':'Internal Transfers',
   '/adjustments':'Stock Adjustments', '/history':'Move History', '/profile':'My Profile',
 }

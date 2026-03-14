@@ -1,132 +1,336 @@
 import { create } from 'zustand'
+import * as authApi      from '../api/auth.api'
+import * as inventoryApi from '../api/inventory.api'
 
-const todayStr = () => new Date().toISOString().slice(0, 10)
-const nowStr   = () => new Date().toLocaleString('en-IN', { hour12:false }).slice(0, 16)
-
-let counters = { RCP:4, DEL:3, TRF:3, ADJ:3 }
-const nextRef = (p) => `${p}-${String(counters[p]++).padStart(3,'0')}`
+// ── helpers ──────────────────────────────────────────────────────
+function getApiMsg(error, fallback = 'Something went wrong') {
+  return error?.response?.data?.message || error?.message || fallback
+}
 
 export const useStore = create((set, get) => ({
 
-  // ── AUTH ─────────────────────────────────────────────────
-  user: null,
-  login:  (u) => set({ user: u }),
-  logout: ()  => set({ user: null }),
+  // ── AUTH ─────────────────────────────────────────────────────
+  user:  JSON.parse(localStorage.getItem('user') || 'null'),
+  token: localStorage.getItem('token') || null,
 
-  // ── PRODUCTS ─────────────────────────────────────────────
-  products: [
-    { id:1, sku:'STL-010', name:'Steel Rods 10mm',  cat:'Raw Materials',    uom:'kg',   stock:95,  reorder:20  },
-    { id:2, sku:'CPW-002', name:'Copper Wire 2mm',  cat:'Raw Materials',    uom:'mtr',  stock:0,   reorder:50  },
-    { id:3, sku:'PVC-401', name:'PVC Pipe 4in',     cat:'Raw Materials',    uom:'pcs',  stock:0,   reorder:30  },
-    { id:4, sku:'SFG-L01', name:'Safety Gloves L',  cat:'Safety Equipment', uom:'pcs',  stock:8,   reorder:25  },
-    { id:5, sku:'BLT-M08', name:'Bolts M8',         cat:'Raw Materials',    uom:'pcs',  stock:500, reorder:100 },
-    { id:6, sku:'WRN-002', name:'Warning Tape',     cat:'Safety Equipment', uom:'roll', stock:45,  reorder:10  },
-    { id:7, sku:'HMR-001', name:'Hammer 500g',      cat:'Tools',            uom:'pcs',  stock:22,  reorder:5   },
-  ],
-  addProduct:    (p)   => set(s => ({ products: [...s.products, { ...p, id:Date.now(), stock:parseInt(p.stock)||0, reorder:parseInt(p.reorder)||0 }] })),
-  updateProduct: (id,d)=> set(s => ({ products: s.products.map(p => p.id===id ? { ...p,...d } : p) })),
-  deleteProduct: (id)  => set(s => ({ products: s.products.filter(p => p.id!==id) })),
-  adjustStock:   (name,delta) => set(s => ({ products: s.products.map(p => p.name===name ? { ...p, stock:Math.max(0,p.stock+delta) } : p) })),
-  setStockTo:    (name,qty)   => set(s => ({ products: s.products.map(p => p.name===name ? { ...p, stock:qty } : p) })),
+  loginAction: async ({ email, password }) => {
+    const res = await authApi.loginApi({ email, password })
+    const { user, token } = res.data
+    localStorage.setItem('token', token)
+    localStorage.setItem('user', JSON.stringify(user))
+    set({ user, token })
+    return { success: true }
+  },
 
-  // ── RECEIPTS ─────────────────────────────────────────────
-  receipts: [
-    { ref:'RCP-001', supplier:'ArcelorMittal India', product:'Steel Rods 10mm', qty:100, wh:'Main Warehouse', status:'Done',    date:'2025-03-10' },
-    { ref:'RCP-002', supplier:'Havells Ltd',          product:'Copper Wire 2mm', qty:200, wh:'Main Warehouse', status:'Waiting', date:'2025-03-12' },
-    { ref:'RCP-003', supplier:'Supreme Industries',   product:'PVC Pipe 4in',    qty:50,  wh:'Warehouse B',    status:'Draft',   date:'2025-03-13' },
-  ],
-  addReceipt: (r) => {
-    const ref = nextRef('RCP')
-    const rec = { ref, ...r, date:todayStr() }
-    set(s => ({ receipts:[rec,...s.receipts] }))
-    if (r.status==='Done') {
-      get().adjustStock(r.product, parseInt(r.qty))
-      get().logMove({ type:'Receipt', ref, product:r.product, qty:`+${r.qty}`, from:'Vendor', to:r.wh })
+  registerAction: async ({ name, email, password, role }) => {
+    const res = await authApi.registerApi({ name, email, password, role })
+    const { user, token } = res.data
+    localStorage.setItem('token', token)
+    localStorage.setItem('user', JSON.stringify(user))
+    set({ user, token })
+    return { success: true }
+  },
+
+  verifySession: async () => {
+    const token = get().token || localStorage.getItem('token')
+    if (!token) {
+      get().logout()
+      return { valid: false }
     }
-    return ref
-  },
-  validateReceipt: (ref) => {
-    const rec = get().receipts.find(r => r.ref===ref)
-    if (!rec || rec.status==='Done') return
-    get().adjustStock(rec.product, parseInt(rec.qty))
-    get().logMove({ type:'Receipt', ref, product:rec.product, qty:`+${rec.qty}`, from:'Vendor', to:rec.wh })
-    set(s => ({ receipts: s.receipts.map(r => r.ref===ref ? { ...r, status:'Done' } : r) }))
+
+    try {
+      const res = await authApi.getMeApi()
+      const serverUser = res?.data?.data
+      if (!serverUser?.user_id) {
+        get().logout()
+        return { valid: false }
+      }
+
+      localStorage.setItem('user', JSON.stringify(serverUser))
+      set({ user: serverUser })
+      return { valid: true, user: serverUser }
+    } catch (_) {
+      get().logout()
+      return { valid: false }
+    }
   },
 
-  // ── DELIVERIES ───────────────────────────────────────────
-  deliveries: [
-    { ref:'DEL-001', customer:'Tata Motors',      product:'Steel Rods 10mm', qty:20,  step:'Pack', status:'Ready',   date:'2025-03-11' },
-    { ref:'DEL-002', customer:'L&T Construction', product:'Bolts M8',        qty:200, step:'Pick', status:'Waiting', date:'2025-03-13' },
-  ],
-  addDelivery: (d) => {
-    const ref = nextRef('DEL')
-    set(s => ({ deliveries:[{ ref,...d, status:'Ready', date:todayStr() },...s.deliveries] }))
-    return ref
-  },
-  validateDelivery: (ref) => {
-    const d = get().deliveries.find(x => x.ref===ref)
-    if (!d || d.status==='Done') return
-    get().adjustStock(d.product, -parseInt(d.qty))
-    get().logMove({ type:'Delivery', ref, product:d.product, qty:`-${d.qty}`, from:'Main WH', to:d.customer })
-    set(s => ({ deliveries: s.deliveries.map(x => x.ref===ref ? { ...x, status:'Done', step:'Validate' } : x) }))
-  },
-  advanceStep: (ref) => set(s => {
-    const steps = ['Pick','Pack','Validate']
-    return { deliveries: s.deliveries.map(d => {
-      if (d.ref!==ref) return d
-      const i = steps.indexOf(d.step)
-      return { ...d, step:steps[Math.min(i+1,2)], status: i>=1 ? 'Ready' : d.status }
-    })}
-  }),
-
-  // ── TRANSFERS ────────────────────────────────────────────
-  transfers: [
-    { ref:'TRF-001', product:'Steel Rods 10mm', from:'Main Warehouse', to:'Production Floor', qty:30,  status:'Ready'   },
-    { ref:'TRF-002', product:'Bolts M8',         from:'Rack A',         to:'Rack B',           qty:500, status:'Waiting' },
-  ],
-  addTransfer: (t) => {
-    const ref = nextRef('TRF')
-    set(s => ({ transfers:[{ ref,...t, status:'Waiting' },...s.transfers] }))
-    return ref
-  },
-  validateTransfer: (ref) => {
-    const t = get().transfers.find(x => x.ref===ref)
-    if (!t || t.status==='Done') return
-    get().logMove({ type:'Transfer', ref, product:t.product, qty:String(t.qty), from:t.from, to:t.to })
-    set(s => ({ transfers: s.transfers.map(x => x.ref===ref ? { ...x, status:'Done' } : x) }))
+  updateProfileAction: async ({ name, email, role, newPassword }) => {
+    const payload = { name, email, role, newPassword }
+    const res = await authApi.updateMeApi(payload)
+    const updatedUser = res?.data?.data
+    if (updatedUser) {
+      localStorage.setItem('user', JSON.stringify(updatedUser))
+      set({ user: updatedUser })
+    }
+    return updatedUser
   },
 
-  // ── ADJUSTMENTS ──────────────────────────────────────────
-  adjustments: [
-    { ref:'ADJ-001', product:'Steel Rods 10mm', location:'Main Warehouse',  recorded:100, counted:97, status:'Done' },
-    { ref:'ADJ-002', product:'Safety Gloves L', location:'Production Floor', recorded:25,  counted:8,  status:'Done' },
-  ],
-  addAdjustment: (a) => {
-    const ref = nextRef('ADJ')
-    set(s => ({ adjustments:[{ ref,...a, status:'Done' },...s.adjustments] }))
-    get().setStockTo(a.product, parseInt(a.counted))
-    const diff = parseInt(a.counted)-parseInt(a.recorded)
-    get().logMove({ type:'Adjustment', ref, product:a.product, qty:(diff>=0?'+':'')+diff, from:'—', to:a.location })
-    return ref
+  logout: () => {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    set({
+      user: null,
+      token: null,
+      warehouses: [],
+      categories: [],
+      products: [],
+      stockRows: [],
+      receipts: [],
+      deliveries: [],
+      transfers: [],
+      adjustments: [],
+    })
   },
 
-  // ── HISTORY ──────────────────────────────────────────────
-  history: [
-    { dt:'2025-03-10 09:15', ref:'RCP-001', type:'Receipt',    product:'Steel Rods 10mm', from:'Vendor',  to:'Main WH',     qty:'+100', user:'John D.' },
-    { dt:'2025-03-10 11:30', ref:'TRF-001', type:'Transfer',   product:'Steel Rods 10mm', from:'Main WH', to:'Production',  qty:'30',   user:'John D.' },
-    { dt:'2025-03-11 14:00', ref:'DEL-001', type:'Delivery',   product:'Steel Rods 10mm', from:'Main WH', to:'Tata Motors', qty:'-20',  user:'John D.' },
-    { dt:'2025-03-12 10:00', ref:'ADJ-001', type:'Adjustment', product:'Steel Rods 10mm', from:'—',       to:'Main WH',     qty:'-3',   user:'John D.' },
-    { dt:'2025-03-12 15:45', ref:'RCP-002', type:'Receipt',    product:'Copper Wire 2mm', from:'Vendor',  to:'Main WH',     qty:'+200', user:'Admin'   },
-  ],
-  logMove: ({ type,ref,product,qty,from,to }) => {
-    const u = get().user
-    set(s => ({ history:[{ dt:nowStr(), ref, type, product, from, to, qty, user: u?.name||'System' },...s.history] }))
+  // ── LOADING ──────────────────────────────────────────────────
+  loading: false,
+
+  // ── WAREHOUSES ───────────────────────────────────────────────
+  warehouses: [],
+  fetchWarehouses: async () => {
+    try {
+      const userId = get().user?.user_id
+      if (!userId) {
+        set({ warehouses: [] })
+        return
+      }
+      const res = await inventoryApi.getWarehousesApi(userId)
+      set({ warehouses: res.data })
+    } catch (_) { set({ warehouses: [] }) }
   },
 
-  // ── TOAST ────────────────────────────────────────────────
+  addWarehouse: async ({ name, location, manager }) => {
+    const res = await inventoryApi.createWarehouseApi({ name, location, manager })
+    const warehouseId = res?.data?.data?.warehouse_id
+    const userId = get().user?.user_id
+
+    if (warehouseId && userId) {
+      try {
+        await inventoryApi.assignWarehouseApi({ user_id: userId, warehouse_id: warehouseId })
+      } catch (_) {
+        // Keep warehouse creation successful even if assignment fails.
+      }
+    }
+
+    await get().fetchWarehouses()
+  },
+
+  deleteWarehouse: async (warehouseId) => {
+    await inventoryApi.deleteWarehouseApi(warehouseId)
+    await get().fetchWarehouses()
+  },
+
+  // ── CATEGORIES ───────────────────────────────────────────────
+  categories: [],
+  fetchCategories: async () => {
+    try {
+      const res = await inventoryApi.getCategoriesApi()
+      set({ categories: res.data })
+    } catch (_) { /* silent */ }
+  },
+
+  addCategory: async ({ name }) => {
+    await inventoryApi.createCategoryApi({ name })
+    await get().fetchCategories()
+  },
+
+  deleteCategory: async (id) => {
+    await inventoryApi.deleteCategoryApi(id)
+    await get().fetchCategories()
+  },
+
+  // ── PRODUCTS ─────────────────────────────────────────────────
+  products: [],
+  fetchProducts: async () => {
+    set({ loading: true })
+    try {
+      const res = await inventoryApi.getProductsApi()
+      // Backend returns { id, name, sku, uom, cat, category_id, stock }
+      // reorder defaults to 0 (not in schema)
+      set({ products: res.data.map(p => ({ ...p, reorder: 0 })) })
+    } catch (_) { /* silent */ }
+    finally { set({ loading: false }) }
+  },
+
+  stockRows: [],
+  fetchStock: async () => {
+    try {
+      const res = await inventoryApi.getStockApi()
+      set({ stockRows: res.data })
+    } catch (_) { /* silent */ }
+  },
+
+  addProduct: async ({ name, sku, cat, uom, stock, category_id, warehouse_id }) => {
+    // Find category_id by name if not supplied directly
+    const { categories, fetchProducts } = get()
+    const resolvedCatId = category_id ||
+      categories.find(c => c.name === cat)?.category_id
+
+    if (!resolvedCatId) throw new Error('Category not found — please select a valid category')
+
+    const selectedWarehouse = warehouse_id ? parseInt(warehouse_id) : null
+    if (!selectedWarehouse) {
+      throw new Error('Please select a warehouse for this product')
+    }
+
+    await inventoryApi.createProductApi({ name, sku, category_id: resolvedCatId, unit: uom })
+
+    // Always create a stock row in the selected warehouse so product visibility is scoped correctly.
+    const parsedStock = parseInt(stock) || 0
+    const productRes = await inventoryApi.getProductsApi()
+    const created = productRes.data.find(p => p.sku === sku.trim())
+    if (created) {
+      await inventoryApi.createStockApi({
+        product_id:  created.id,
+        warehouse_id: selectedWarehouse,
+        quantity:    parsedStock,
+      })
+    }
+    await fetchProducts()
+    await get().fetchStock()
+  },
+
+  deleteProduct: async (id) => {
+    await inventoryApi.deleteProductApi(id)
+    await get().fetchProducts()
+    await get().fetchStock()
+  },
+
+  updateProduct: async (id, data) => {
+    get().showToast('Edit not yet supported by backend', 'warning')
+  },
+
+  // ── RECEIPTS ─────────────────────────────────────────────────
+  receipts: [],
+  fetchReceipts: async () => {
+    try {
+      const res = await inventoryApi.getReceiptsApi()
+      set({ receipts: res.data })
+    } catch (_) { /* silent */ }
+  },
+
+  addReceipt: async ({ supplier, product_id, qty, warehouse_id, status }) => {
+    const res = await inventoryApi.createReceiptApi({
+      supplier_name: supplier,
+      product_id,
+      quantity:      qty,
+      warehouse_id,
+      status,
+    })
+    await get().fetchReceipts()
+    await get().fetchProducts()
+    await get().fetchStock()
+    return res.data?.data?.receipt_id
+  },
+
+  validateReceipt: async (receiptId) => {
+    await inventoryApi.validateReceiptApi(receiptId)
+    await get().fetchReceipts()
+    await get().fetchProducts()
+    await get().fetchStock()
+  },
+
+  // ── DELIVERIES ───────────────────────────────────────────────
+  deliveries: [],
+  fetchDeliveries: async () => {
+    try {
+      const res = await inventoryApi.getDeliveriesApi()
+      set({ deliveries: res.data })
+    } catch (_) { /* silent */ }
+  },
+
+  addDelivery: async ({ customer, product_id, qty, warehouse_id, status }) => {
+    const res = await inventoryApi.createDeliveryApi({
+      customer_name: customer,
+      product_id,
+      quantity:      qty,
+      warehouse_id,
+      status,
+    })
+    await get().fetchDeliveries()
+    await get().fetchProducts()
+    await get().fetchStock()
+    return res.data?.data?.delivery_id
+  },
+
+  validateDelivery: async (deliveryId) => {
+    await inventoryApi.validateDeliveryApi(deliveryId)
+    await get().fetchDeliveries()
+    await get().fetchProducts()
+    await get().fetchStock()
+  },
+
+  // ── TRANSFERS ────────────────────────────────────────────────
+  transfers: [],
+  fetchTransfers: async () => {
+    try {
+      const res = await inventoryApi.getTransfersApi()
+      set({ transfers: res.data })
+    } catch (_) { /* silent */ }
+  },
+
+  addTransfer: async ({ product_id, from_warehouse, to_warehouse, qty, status }) => {
+    const res = await inventoryApi.createTransferApi({
+      product_id,
+      from_warehouse,
+      to_warehouse,
+      quantity: qty,
+      status,
+    })
+    await get().fetchTransfers()
+    return res.data?.data?.transfer_id
+  },
+
+  validateTransfer: async (transferId) => {
+    await inventoryApi.validateTransferApi(transferId)
+    await get().fetchTransfers()
+    await get().fetchProducts()
+    await get().fetchStock()
+  },
+
+  // ── ADJUSTMENTS ──────────────────────────────────────────────
+  adjustments: [],
+  fetchAdjustments: async () => {
+    try {
+      const res = await inventoryApi.getAdjustmentsApi()
+      set({ adjustments: res.data })
+    } catch (_) { /* silent */ }
+  },
+
+  addAdjustment: async ({ product_id, warehouse_id, new_quantity, reason }) => {
+    await inventoryApi.adjustStockApi({ product_id, warehouse_id, new_quantity, reason })
+    await get().fetchAdjustments()
+    await get().fetchProducts()
+    await get().fetchStock()
+  },
+
+  // ── TOAST ────────────────────────────────────────────────────
   toast: null,
-  showToast: (msg, type='info') => {
-    set({ toast:{ msg, type, id:Date.now() } })
-    setTimeout(() => set({ toast:null }), 3200)
+  showToast: (msg, type = 'info') => {
+    set({ toast: { msg, type, id: Date.now() } })
+    setTimeout(() => set({ toast: null }), 3200)
+  },
+
+  // ── BOOTSTRAP  (call once on app init) ───────────────────────
+  bootstrap: async () => {
+    const verify = await get().verifySession()
+    if (!verify.valid) return
+
+    const { fetchWarehouses, fetchCategories, fetchProducts,
+            fetchStock, fetchReceipts, fetchDeliveries, fetchTransfers, fetchAdjustments } = get()
+    await Promise.all([
+      fetchWarehouses(),
+      fetchCategories(),
+      fetchProducts(),
+      fetchStock(),
+      fetchReceipts(),
+      fetchDeliveries(),
+      fetchTransfers(),
+      fetchAdjustments(),
+    ])
   },
 }))
+
+
+
