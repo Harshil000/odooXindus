@@ -1,4 +1,4 @@
-const { registerUserService, loginUserService , forgetPasswordService } = require('../services/auth.service');
+const { registerUserService, loginUserService, forgetPasswordService, verifyOtpService, resetPasswordService } = require('../services/auth.service');
 
 async function registerUser(req, res) {
     const { name, email, password, role } = req.body;
@@ -49,4 +49,18 @@ async function forgetPassword(req , res){
     return res.status(200).json({ message: user.message });
 }
 
-module.exports = { registerUser, loginUser , forgetPassword };
+async function verifyOtp(req, res) {
+    const { email, otp } = req.body;
+
+    const result = await verifyOtpService({ email, otp });
+    return res.status(result.statusCode).json({ message: result.message });
+}
+
+async function resetPassword(req, res) {
+    const { email, otp, newPassword } = req.body;
+
+    const result = await resetPasswordService({ email, otp, newPassword });
+    return res.status(result.statusCode).json({ message: result.message });
+}
+
+module.exports = { registerUser, loginUser, forgetPassword, verifyOtp, resetPassword };

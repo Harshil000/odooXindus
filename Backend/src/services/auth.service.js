@@ -8,8 +8,32 @@ const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const nodemailer = require("nodemailer");
 
+const OTP_EXPIRY_MS = 2 * 60 * 1000;
+
+// In-memory OTP store: { email -> { otp, expiresAt } }
+const otpStore = new Map();
+
 function generateOtp() {
     return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function saveOtp(email, otp) {
+    otpStore.set(email, {
+        otp,
+        expiresAt: Date.now() + OTP_EXPIRY_MS,
+    });
+}
+
+function verifyStoredOtp(email, otp, { consume } = { consume: true }) {
+    const record = otpStore.get(email);
+    if (!record) return { valid: false, reason: 'no OTP found for this email' };
+    if (Date.now() > record.expiresAt) {
+        otpStore.delete(email);
+        return { valid: false, reason: 'OTP expired' };
+    }
+    if (record.otp !== String(otp)) return { valid: false, reason: 'invalid OTP' };
+    if (consume) otpStore.delete(email);
+    return { valid: true };
 }
 
 async function registerUserService({ name, email, password, role }) {
@@ -120,14 +144,15 @@ async function forgetPasswordService({ email }) {
           from: process.env.MAIL_FROM || process.env.SMTP_USER,
           to: normalizedEmail,
           subject: "Password Reset OTP",
-          text: `Your OTP is ${otp}. It will expire in 10 minutes.`,
-          html: `<p>Your OTP is <b>${otp}</b>. It will expire in 10 minutes.</p>`,
+          text: `Your OTP is ${otp}. It will expire in 2 minutes.`,
+          html: `<p>Your OTP is <b>${otp}</b>. It will expire in 2 minutes.</p>`,
         });
+
+        saveOtp(normalizedEmail, otp);
 
         return {
             statusCode: 200,
             message: 'OTP sent successfully',
-            otp,
         };
     } catch (error) {
         return {
@@ -137,8 +162,49 @@ async function forgetPasswordService({ email }) {
     }
 }
 
+async function verifyOtpService({ email, otp }) {
+    if (!email || !otp) {
+        return { statusCode: 400, message: 'email and otp are required' };
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const result = verifyStoredOtp(normalizedEmail, otp, { consume: false });
+
+    if (!result.valid) {
+        return { statusCode: 400, message: result.reason };
+    }
+
+    return { statusCode: 200, message: 'OTP verified successfully' };
+}
+
+async function resetPasswordService({ email, otp, newPassword }) {
+    if (!email || !otp || !newPassword) {
+        return { statusCode: 400, message: 'email, otp and newPassword are required' };
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const result = verifyStoredOtp(normalizedEmail, otp);
+    if (!result.valid) {
+        return { statusCode: 400, message: result.reason };
+    }
+
+    const existingUser = await findLoginUserByEmail(normalizedEmail);
+    if (!existingUser) {
+        return { statusCode: 404, message: 'user not found' };
+    }
+
+    const { updateUserPassword } = require('../repositories/user.repository');
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await updateUserPassword(existingUser.user_id, hashedPassword);
+
+    return { statusCode: 200, message: 'password reset successfully' };
+}
+
 module.exports = {
     registerUserService,
     loginUserService,
-    forgetPasswordService
+    forgetPasswordService,
+    verifyOtpService,
+    resetPasswordService,
 };
