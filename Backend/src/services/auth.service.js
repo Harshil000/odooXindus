@@ -6,6 +6,11 @@ const {
 } = require('../repositories/user.repository');
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
+const nodemailer = require("nodemailer");
+
+function generateOtp() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+}
 
 async function registerUserService({ name, email, password, role }) {
 
@@ -82,7 +87,58 @@ async function loginUserService({ email, password }) {
     };
 }
 
+async function forgetPasswordService({ email }) {
+    if (typeof email !== 'string' || !email.trim()) {
+        return { statusCode: 400, message: 'email is required' };
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingUser = await findUserByEmail(normalizedEmail);
+
+    if (!existingUser) {
+        return { statusCode: 404, message: 'user not found' };
+    }
+
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+        return { statusCode: 500, message: 'SMTP credentials are not configured' };
+    }
+
+    const otp = generateOtp();
+
+    const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || "smtp.gmail.com",
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: String(process.env.SMTP_SECURE).toLowerCase() === 'true',
+        auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+        },
+    });
+
+    try {
+        await transporter.sendMail({
+          from: process.env.MAIL_FROM || process.env.SMTP_USER,
+          to: normalizedEmail,
+          subject: "Password Reset OTP",
+          text: `Your OTP is ${otp}. It will expire in 10 minutes.`,
+          html: `<p>Your OTP is <b>${otp}</b>. It will expire in 10 minutes.</p>`,
+        });
+
+        return {
+            statusCode: 200,
+            message: 'OTP sent successfully',
+            otp,
+        };
+    } catch (error) {
+        return {
+            statusCode: 500,
+            message: error.message || 'failed to send email',
+        };
+    }
+}
+
 module.exports = {
     registerUserService,
     loginUserService,
+    forgetPasswordService
 };

@@ -18,8 +18,16 @@ const FIND_LOGIN_USER_BY_EMAIL_QUERY = `
   LIMIT 1;
 `;
 
+const UPDATE_USER_PASSWORD_QUERY = `
+  UPDATE users
+  SET password = $2
+  WHERE user_id = $1
+  RETURNING user_id, name, email, role, created_at;
+`;
+
 module.exports = {
   INSERT_USER_QUERY,
   FIND_USER_BY_EMAIL_QUERY,
   FIND_LOGIN_USER_BY_EMAIL_QUERY,
+  UPDATE_USER_PASSWORD_QUERY,
 };

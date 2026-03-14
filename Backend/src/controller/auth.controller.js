@@ -1,4 +1,4 @@
-const { registerUserService, loginUserService } = require('../services/auth.service');
+const { registerUserService, loginUserService , forgetPasswordService } = require('../services/auth.service');
 
 async function registerUser(req, res) {
     const { name, email, password, role } = req.body;
@@ -36,4 +36,17 @@ async function loginUser(req, res) {
     return res.status(200).json({ user: user.data, token: user.token, message: user.message });
 }
 
-module.exports = { registerUser, loginUser };
+async function forgetPassword(req , res){
+    const { email } = req.body;
+    const user = await forgetPasswordService({
+        email,
+    });
+
+    if (user.statusCode !== 200) {
+        return res.status(user.statusCode).json(user.message);
+    }
+
+    return res.status(200).json({ message: user.message });
+}
+
+module.exports = { registerUser, loginUser , forgetPassword };

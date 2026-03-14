@@ -3,6 +3,7 @@ const {
   INSERT_USER_QUERY,
   FIND_USER_BY_EMAIL_QUERY,
   FIND_LOGIN_USER_BY_EMAIL_QUERY,
+  UPDATE_USER_PASSWORD_QUERY,
 } = require('../queries/user.queries');
 
 async function findUserByEmail(email) {
@@ -21,8 +22,14 @@ async function findLoginUserByEmail(email) {
   return result.rows[0] || null;
 }
 
+async function updateUserPassword(userId, password) {
+  const result = await pool.query(UPDATE_USER_PASSWORD_QUERY, [userId, password]);
+  return result.rows[0] || null;
+}
+
 module.exports = {
   findUserByEmail,
   createUser,
   findLoginUserByEmail,
+  updateUserPassword,
 };
